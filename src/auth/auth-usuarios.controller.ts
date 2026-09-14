@@ -46,8 +46,9 @@ export class AuthUsuariosController {
   ) {}
 
   private jwtContext(req: Request): { userId: number; rol?: number } {
-    const user = (req as Request & { user?: { userId?: number; rol?: number } })
-      .user;
+    const user = (req as Request & {
+      user?: { userId?: number | string; rol?: number | string };
+    }).user;
     const userId = Number(user?.userId);
     if (!Number.isFinite(userId) || userId <= 0) {
       throw new UnauthorizedException(
@@ -55,11 +56,10 @@ export class AuthUsuariosController {
       );
     }
 
-    const rolRaw = user?.rol;
-    if (rolRaw === undefined || rolRaw === null || rolRaw === '') {
+    if (user?.rol === undefined || user?.rol === null || user?.rol === '') {
       return { userId };
     }
-    const rol = Number(rolRaw);
+    const rol = Number(user.rol);
     if (!Number.isFinite(rol)) {
       return { userId };
     }
