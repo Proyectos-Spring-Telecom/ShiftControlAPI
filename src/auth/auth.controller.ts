@@ -13,11 +13,6 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
-  ApiBadRequestResponse,
-  ApiBody,
-  ApiForbiddenResponse,
-  ApiInternalServerErrorResponse,
-  ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
@@ -29,13 +24,10 @@ import { EndpointProxyService } from 'src/integration/endpoint-proxy.service';
 import { LoginAuthDto } from './dto/login-auth.dto';
 import { LoginAuthPinDto } from './dto/login-pin.dto';
 import { LoginAuthConfirmacionDto } from './dto/login-confirmacion.dto';
-import { UpdateMiPinDto } from './dto/update-mi-pin.dto';
 import { LoginRefreshTokenDto } from './dto/login-refresh-token.dto';
 import { LoginMeResponseDto } from './dto/login-me.response.dto';
 import { CodigoPasajeroAutenticacion } from './dto/login-autenticacion.dto';
 import { JwtAuthGuard } from 'src/guard/jwt-auth.guard';
-import { RolesGuard } from 'src/guard/roles.guard';
-import { Roles } from 'src/common/decorators/roles.decorator';
 import { AuthLoginShadowService } from './auth-login-shadow.service';
 
 const THROTTLE_LOGIN_LIMIT = Number(process.env.THROTTLE_LOGIN_LIMIT ?? 5);
@@ -206,62 +198,6 @@ export class AuthController {
     this.logger.log(`Proxy → GET login/me userId=${this.jwtUserId(req) ?? 'n/a'}`);
     const r = await this.endpointProxy.forwardGet('login/me', req);
     this.logger.log(`Proxy ← GET login/me status=${r.status}`);
-    res.status(r.status);
-    return r.data;
-  }
-
-  @Patch('mi-nip')
-  @HttpCode(HttpStatus.OK)
-  @ApiTags('Usuarios')
-  @ApiBearerAuth('bearer-token')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles()
-  @ApiOperation({
-    summary: 'Definir o cambiar mi NIP/PIN (operador)',
-    description:
-      'Proxy BFF hacia Next `PATCH …/api/usuarios/mi-nip`. El `userId` sale del JWT. ' +
-      'El body usa el campo `pinHash` con el PIN en claro (6 u 8 dígitos); Next lo hashea con bcrypt. ' +
-      'No revoca la sesión actual (a diferencia del cambio de contraseña). ' +
-      'Login operador posterior: `POST /api/login/operador/accesso/nip` con userName + codigo (PIN en claro).',
-  })
-  @ApiBody({ type: UpdateMiPinDto })
-  @ApiOkResponse({
-    description: 'NIP actualizado',
-    schema: {
-      example: {
-        status: 'success',
-        message: 'El NIP ha sido actualizado correctamente.',
-        data: { id: 3, nombre: 'Osmar Martinez' },
-      },
-    },
-  })
-  @ApiUnauthorizedResponse({
-    description: 'Sin token o token inválido/expirado',
-  })
-  @ApiNotFoundResponse({
-    description: 'Usuario del token no existe o estatus distinto de activo en Next',
-  })
-  @ApiBadRequestResponse({
-    description: 'PIN inválido (longitud, dígitos, secuencia o todos iguales)',
-  })
-  @ApiForbiddenResponse({ description: 'Usuario sin rol asignado' })
-  @ApiInternalServerErrorResponse({
-    description: 'Error al actualizar el NIP o fallo de conexión con Next',
-  })
-  async actualizarMiNip(
-    @Body() dto: UpdateMiPinDto,
-    @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
-  ) {
-    this.logger.log(
-      `Proxy → PATCH usuarios/mi-nip userId=${this.jwtUserId(req) ?? 'n/a'} (PIN omitido en log)`,
-    );
-    const r = await this.endpointProxy.forwardPatch(
-      'usuarios/mi-nip',
-      { pinHash: dto.pinHash },
-      req,
-    );
-    this.logger.log(`Proxy ← PATCH usuarios/mi-nip status=${r.status}`);
     res.status(r.status);
     return r.data;
   }
