@@ -63,7 +63,6 @@ async function bootstrap() {
     .addTag('Modulos', 'Gestión de módulos del sistema')
     .addTag('Permisos', 'Gestión de permisos')
     .addTag('S3 - archivos', 'Carga de archivos a S3')
-    .addTag('Usuarios', 'Gestión de usuarios')
     .addTag('Cat Estatus Turno', 'Catálogo estatus de turno')
     .addTag('Cat Grado Severidad', 'Catálogo grado de severidad')
     .addTag('Cat Tipo Daño', 'Catálogo tipo de daño')

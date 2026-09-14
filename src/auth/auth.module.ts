@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AuthController } from './auth.controller';
 import { AuthNextFaceProxyController } from './auth-next-face-proxy.controller';
 import { AuthUsuariosController } from './auth-usuarios.controller';
+import { AuthLoginPerfilController } from './auth-login-perfil.controller';
 import { AuthLoginShadowService } from './auth-login-shadow.service';
 import { AuthUsuarioPasswordService } from './auth-usuario-password.service';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -31,7 +32,12 @@ import { TypeOrmModule } from '@nestjs/typeorm';
       }),
     }),
   ],
-  controllers: [AuthController, AuthNextFaceProxyController, AuthUsuariosController],
+  controllers: [
+    AuthController,
+    AuthLoginPerfilController,
+    AuthNextFaceProxyController,
+    AuthUsuariosController,
+  ],
   providers: [JwtStrategy, AuthLoginShadowService, AuthUsuarioPasswordService],
   exports: [JwtModule],
 })
