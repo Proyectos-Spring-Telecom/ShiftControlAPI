@@ -35,7 +35,8 @@ export class BitacoraVehicularController {
       'Operador: nombre e id desde GET /api/usuarios/:id (Next), usando IdUsuario del turno asociado a la bitácora. ' +
       'Estado del vehículo: carrocería (InspeccionVehiculoEx), indicadores, luces, accesorios, documentación y fluidos desde BitacoraVehiculo. ' +
       'Métricas iniciales: odómetro (Tablero.KmActual) y litros cargados (regla de tres: gasolina % × capacidadLitros / 100). ' +
-      'Ubicación: coordenadas del turno (cierre si existen; si no, apertura) y reverse geocoding Nominatim.',
+      'Ubicación: coordenadas del turno (cierre si existen; si no, apertura) y reverse geocoding Nominatim. ' +
+      'evidenciaLicencia: URL de Turnos.EvidenciaLicencia del turno asociado a la bitácora.',
   })
   @ApiQuery({ name: 'idBitacoraVehiculo', type: Number, example: 1 })
   @ApiResponse({
@@ -66,6 +67,8 @@ export class BitacoraVehicularController {
             { etiqueta: 'Litros cargados', valor: '45.50 LTS' },
           ],
           ubicacion: 'Toluca de Lerdo, Estado de México, México',
+          evidenciaLicencia:
+            'https://springtelecom.mx/shiftControlAPI/files/turnos/15/uuid-licencia.jpeg',
         },
       },
     },

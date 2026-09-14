@@ -92,6 +92,7 @@ export class BitacoraVehicularService {
         estadoVehiculo,
         metricasIniciales: this.buildMetricasIniciales(bitacora, vehiculoNext),
         ubicacion,
+        evidenciaLicencia: bitacora.turno?.evidenciaLicencia?.trim() || null,
       },
     };
   }

@@ -22,5 +22,7 @@ export interface InformacionGeneralResponse {
     estadoVehiculo: EstadoVehiculoItem[];
     metricasIniciales: MetricaInicialItem[];
     ubicacion: string | null;
+    /** URL pública de Turnos.EvidenciaLicencia (turno ligado a la bitácora). */
+    evidenciaLicencia: string | null;
   };
 }

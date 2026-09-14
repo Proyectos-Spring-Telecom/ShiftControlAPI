@@ -119,6 +119,7 @@ export class ReportesPdfService {
         idUsuario: turno.idUsuario,
         idBitacoraApertura: turno.idBitacoraApertura,
         evidenciaApertura: turno.evidenciaApertura,
+        evidenciaLicencia: turno.evidenciaLicencia,
         longitudApertura: turno.longitudApertura,
         latitudApertura: turno.latitudApertura,
         fechaApertura: turno.fechaApertura,
@@ -217,6 +218,24 @@ ${this.seccionBitacora('Bitácora de cierre', t.bitacoraCierre, imageSrcMap)}
   ${this.tablaIncidenciasGasolina(t.incidenciasGasolina, imageSrcMap)}
 </div>
 
+${(() => {
+  const filaLicencia = this.renderFilaImagen(
+    'Evidencia licencia',
+    t.evidenciaLicencia,
+    imageSrcMap,
+  );
+  if (!filaLicencia) {
+    return '';
+  }
+  return `<div class="section section-compact">
+  <table class="data-table">
+    <tbody>
+      ${filaLicencia}
+    </tbody>
+  </table>
+</div>`;
+})()}
+
 <footer class="footer">ShiftControl — Reporte generado automáticamente</footer>
 `;
     return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>${tituloReporte}</title></head><body>${body}</body></html>`;
@@ -234,6 +253,7 @@ ${this.seccionBitacora('Bitácora de cierre', t.bitacoraCierre, imageSrcMap)}
 
     add(t.evidenciaApertura);
     add(t.evidenciaCierre);
+    add(t.evidenciaLicencia);
 
     for (const bit of [t.bitacoraApertura, t.bitacoraCierre]) {
       const tab = asRecord(asRecord(bit)?.tablero);

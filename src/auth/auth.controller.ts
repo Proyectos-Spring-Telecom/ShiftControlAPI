@@ -70,7 +70,7 @@ export class AuthController {
   constructor(
     private readonly endpointProxy: EndpointProxyService,
     private readonly authLoginShadow: AuthLoginShadowService,
-  ) {}
+  ) { }
 
   private jwtUserId(req: Request): number | undefined {
     const u = (req as Request & { user?: { userId?: number } }).user;

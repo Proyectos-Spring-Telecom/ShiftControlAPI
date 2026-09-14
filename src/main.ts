@@ -9,6 +9,8 @@ import * as path from 'path';
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
+  app.enableShutdownHooks(['SIGTERM', 'SIGINT']);
+
   // Prefijo global: todas las rutas bajo /api (auth, mesas, clientes, etc.)
   app.setGlobalPrefix('api');
 
