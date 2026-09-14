@@ -45,13 +45,23 @@ export class AuthUsuariosController {
     private readonly authUsuarioPassword: AuthUsuarioPasswordService,
   ) {}
 
-  private jwtContext(req: Request): { userId: number; rol: number } {
+  private jwtContext(req: Request): { userId: number; rol?: number } {
     const user = (req as Request & { user?: { userId?: number; rol?: number } })
       .user;
     const userId = Number(user?.userId);
-    const rol = Number(user?.rol);
-    if (!Number.isFinite(userId) || userId <= 0 || !Number.isFinite(rol)) {
-      throw new UnauthorizedException('JWT de ShiftControl inválido o ausente');
+    if (!Number.isFinite(userId) || userId <= 0) {
+      throw new UnauthorizedException(
+        'JWT de ShiftControl inválido o ausente (falta id de usuario)',
+      );
+    }
+
+    const rolRaw = user?.rol;
+    if (rolRaw === undefined || rolRaw === null || rolRaw === '') {
+      return { userId };
+    }
+    const rol = Number(rolRaw);
+    if (!Number.isFinite(rol)) {
+      return { userId };
     }
     return { userId, rol };
   }

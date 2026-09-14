@@ -8,7 +8,8 @@ const ROLES_CON_ID_USUARIO_DESDE_TOKEN = new Set([1, 3, 4, 5]);
 
 export interface CambiarAccesoJwtContext {
   userId: number;
-  rol: number;
+  /** Si falta en el JWT, no se inyecta `idUsuario` (flujo de usuario normal). */
+  rol?: number;
 }
 
 @Injectable()
@@ -31,7 +32,7 @@ export class AuthUsuarioPasswordService {
       passwordConfirmacion: dto.passwordConfirmacion,
     };
 
-    if (ROLES_CON_ID_USUARIO_DESDE_TOKEN.has(jwt.rol)) {
+    if (jwt.rol != null && ROLES_CON_ID_USUARIO_DESDE_TOKEN.has(jwt.rol)) {
       body.idUsuario = jwt.userId;
     }
 
@@ -46,7 +47,7 @@ export class AuthUsuarioPasswordService {
     const body = this.buildCambiarAccesoBody(dto, jwt);
 
     this.logger.log(
-      `Proxy → POST usuarios/cambiar/accesso userId=${jwt.userId} rol=${jwt.rol} ` +
+      `Proxy → POST usuarios/cambiar/accesso userId=${jwt.userId} rol=${jwt.rol ?? 'n/a'} ` +
         `idUsuarioEnBody=${body.idUsuario ?? 'omitido'}`,
     );
 
