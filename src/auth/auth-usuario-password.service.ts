@@ -1,63 +1,55 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import type { Request } from 'express';
 import { EndpointProxyService } from 'src/integration/endpoint-proxy.service';
 import type { CambiarAccesoUsuarioDto } from './dto/cambiar-acceso-usuario.dto';
 
-/** Roles que Next exige con `idUsuario` en el body (Shift inyecta el del JWT). */
-const ROLES_CON_ID_USUARIO_DESDE_TOKEN = new Set([1, 3, 4, 5]);
-
-export interface CambiarAccesoJwtContext {
-  userId: number;
-  /** Si falta en el JWT, no se inyecta `idUsuario` (flujo de usuario normal). */
-  rol?: number;
-}
-
+/**
+ * Proxy hacia Next `POST /api/login/cambiar/accesso`.
+ * Acepta Bearer de login (`type: access`) o del correo (`type: password_reset`).
+ * El usuario sale del JWT en Next; el body solo lleva contraseñas.
+ */
 @Injectable()
 export class AuthUsuarioPasswordService {
   private readonly logger = new Logger(AuthUsuarioPasswordService.name);
 
   constructor(private readonly endpointProxy: EndpointProxyService) {}
 
-  /**
-   * Arma el body hacia Next `POST /usuarios/cambiar/accesso`.
-   * Roles 1, 3, 4 y 5: siempre envían `idUsuario` del access token.
-   * Otros roles: solo contraseña (Next usa el usuario del token).
-   */
   buildCambiarAccesoBody(
     dto: CambiarAccesoUsuarioDto,
-    jwt: CambiarAccesoJwtContext,
-  ): Record<string, string | number> {
-    const body: Record<string, string | number> = {
+  ): Record<string, string> {
+    return {
       passwordNueva: dto.passwordNueva,
       passwordConfirmacion: dto.passwordConfirmacion,
     };
-
-    if (jwt.rol != null && ROLES_CON_ID_USUARIO_DESDE_TOKEN.has(jwt.rol)) {
-      body.idUsuario = jwt.userId;
-    }
-
-    return body;
   }
 
   async cambiarAcceso(
     dto: CambiarAccesoUsuarioDto,
     req: Request,
-    jwt: CambiarAccesoJwtContext,
   ): Promise<{ status: number; data: unknown }> {
-    const body = this.buildCambiarAccesoBody(dto, jwt);
+    const authorization =
+      typeof req.headers.authorization === 'string'
+        ? req.headers.authorization.trim()
+        : '';
+    if (!authorization.toLowerCase().startsWith('bearer ')) {
+      throw new BadRequestException(
+        'Debe enviar Authorization: Bearer <token> (access o password_reset del correo)',
+      );
+    }
+
+    const body = this.buildCambiarAccesoBody(dto);
 
     this.logger.log(
-      `Proxy → POST usuarios/cambiar/accesso userId=${jwt.userId} rol=${jwt.rol ?? 'n/a'} ` +
-        `idUsuarioEnBody=${body.idUsuario ?? 'omitido'}`,
+      'Proxy → POST login/cambiar/accesso (Bearer omitido en log; body solo passwords)',
     );
 
     const r = await this.endpointProxy.forwardPost(
-      'usuarios/cambiar/accesso',
+      'login/cambiar/accesso',
       body,
       req,
     );
 
-    this.logger.log(`Proxy ← POST usuarios/cambiar/accesso status=${r.status}`);
+    this.logger.log(`Proxy ← POST login/cambiar/accesso status=${r.status}`);
 
     return r;
   }
