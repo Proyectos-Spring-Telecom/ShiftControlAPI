@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BitacoraVehiculo } from 'src/entities/BitacoraVehiculo';
 import { InspeccionVehiculoEx } from 'src/entities/InspeccionVehiculoEx';
@@ -12,7 +12,7 @@ import { BitacoraVehicularService } from './bitacora-vehicular.service';
   imports: [
     TypeOrmModule.forFeature([BitacoraVehiculo, InspeccionVehiculoEx]),
     EndpointProxyModule,
-    VehiculosModule,
+    forwardRef(() => VehiculosModule),
     UbicacionModule,
   ],
   controllers: [BitacoraVehicularController],

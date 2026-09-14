@@ -20,6 +20,7 @@ import { PlacasModule } from './placas/placas.module';
 import { UbicacionModule } from './ubicacion/ubicacion.module';
 import { BitacoraVehicularModule } from './bitacora-vehicular/bitacora-vehicular.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 import Joi from 'joi';
 
 @Module({
@@ -144,6 +145,8 @@ import Joi from 'joi';
     BitacoraVehicularModule,
 
     WebhooksModule,
+
+    DashboardModule,
   ],
   providers: [
     {

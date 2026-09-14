@@ -1,9 +1,34 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  forwardRef,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Not, Repository } from 'typeorm';
 import { EndpointProxyService } from 'src/integration/endpoint-proxy.service';
 import { Vehiculos } from 'src/entities/Vehiculos';
+import { Turnos } from 'src/entities/Turnos';
+import { TenantFilterService } from 'src/common/tenant-filter/tenant-filter.service';
+import {
+  EstatusEnum,
+  EnumEstatusTurno,
+} from 'src/common/estatus.enum';
+import { TurnosService } from 'src/turnos/turnos.service';
+import type { ApiResponseCommon } from 'src/common/ApiResponse';
+import type {
+  VehiculoTurnoEstadoResponseDto,
+  VehiculoTurnoResumenDto,
+  VehiculoTurnoEstadoVehiculoDto,
+} from './dto/vehiculo-turno-estado.response';
 import type { Request } from 'express';
+
+const PAGE_MIN = 1;
+const LIMIT_MIN = 1;
+const LIMIT_MAX = 100;
 
 @Injectable()
 export class VehiculosService {
@@ -112,8 +137,13 @@ export class VehiculosService {
 
   constructor(
     private readonly endpointProxy: EndpointProxyService,
+    private readonly tenantFilter: TenantFilterService,
     @InjectRepository(Vehiculos)
     private readonly vehiculosRepository: Repository<Vehiculos>,
+    @InjectRepository(Turnos)
+    private readonly turnosRepository: Repository<Turnos>,
+    @Inject(forwardRef(() => TurnosService))
+    private readonly turnosService: TurnosService,
   ) {}
 
   /**
@@ -133,21 +163,471 @@ export class VehiculosService {
   }
 
   /**
-   * Lista paginada — proxy a Next GET /vehiculos/:page/:limit
+   * Lista paginada desde tabla sombra local `Vehiculos`.
+   * Formato alineado a turnos: `{ data, paginated: { total, page, lastPage } }`.
+   * Alcance por rol vía TenantFilterService (1–2 todos; 3–4 cliente+hijos; resto su idCliente).
    */
-  async findAll(page: number, limit: number, req: Request) {
-    const r = await this.endpointProxy.forwardGet(
-      `vehiculos/${page}/${limit}`,
-      req,
-    );
+  async findAll(
+    page: number,
+    limit: number,
+    idCliente: number,
+    rol: number,
+  ): Promise<ApiResponseCommon> {
+    const pageNum = Number.isFinite(page) ? Math.floor(page) : PAGE_MIN;
+    const limitNum = Number.isFinite(limit) ? Math.floor(limit) : 10;
 
-    if (r.status >= 200 && r.status < 300) {
-      this.syncShadowFromList(r.data).catch((err) =>
-        this.logger.warn(`Error sincronizando sombra: ${(err as Error).message}`),
+    if (pageNum < PAGE_MIN) {
+      throw new BadRequestException(`page debe ser >= ${PAGE_MIN}`);
+    }
+    if (limitNum < LIMIT_MIN || limitNum > LIMIT_MAX) {
+      throw new BadRequestException(
+        `limit debe estar entre ${LIMIT_MIN} y ${LIMIT_MAX}`,
       );
     }
 
-    return { status: r.status, data: r.data };
+    const access = await this.tenantFilter.build(rol, idCliente, 'v', 'IdCliente');
+    if (access.sinAcceso) {
+      return {
+        data: [],
+        paginated: { total: 0, page: pageNum, lastPage: 1 },
+      };
+    }
+
+    const offset = (pageNum - 1) * limitNum;
+
+    const sqlData = `
+      SELECT
+        v.Id AS id,
+        v.IdCliente AS idCliente,
+        v.Placas AS placas,
+        v.FotoFrente AS fotoFrente,
+        v.Marca AS marca,
+        v.Modelo AS modelo,
+        v.IdVehiculoAuth AS idVehiculoAuth,
+        v.FechaCreacion AS fechaCreacion,
+        v.FechaActualizacion AS fechaActualizacion
+      FROM Vehiculos v
+      WHERE 1 = 1 ${access.sql}
+      ORDER BY v.Placas ASC
+      LIMIT ? OFFSET ?
+    `;
+    const sqlCount = `
+      SELECT COUNT(*) AS total
+      FROM Vehiculos v
+      WHERE 1 = 1 ${access.sql}
+    `;
+
+    const [dataRows, totalResult] = await Promise.all([
+      this.vehiculosRepository.query(sqlData, [
+        ...access.params,
+        limitNum,
+        offset,
+      ]),
+      this.vehiculosRepository.query(sqlCount, [...access.params]),
+    ]);
+
+    const total = Number((totalResult[0] as { total?: unknown })?.total ?? 0);
+    const data = (dataRows as Record<string, unknown>[]).map((row) =>
+      this.mapVehiculoShadowRow(row),
+    );
+
+    return {
+      data,
+      paginated: {
+        total,
+        page: pageNum,
+        lastPage: Math.ceil(total / limitNum) || 1,
+      },
+    };
+  }
+
+  private mapVehiculoShadowRow(row: Record<string, unknown>) {
+    const num = (v: unknown): number | null =>
+      v != null && v !== '' && !Number.isNaN(Number(v)) ? Number(v) : null;
+    return {
+      id: Number(row.id),
+      idCliente: num(row.idCliente),
+      placas: (row.placas as string | null) ?? null,
+      fotoFrente: (row.fotoFrente as string | null) ?? null,
+      marca: (row.marca as string | null) ?? null,
+      modelo: (row.modelo as string | null) ?? null,
+      idVehiculoAuth: num(row.idVehiculoAuth),
+      fechaCreacion: (row.fechaCreacion as Date | null) ?? null,
+      fechaActualizacion: (row.fechaActualizacion as Date | null) ?? null,
+    };
+  }
+
+  /**
+   * Estado de turno del vehículo: activo (EN_CURSO) o, si no hay, el último por fechaApertura.
+   */
+  async findTurnoEstado(
+    idVehiculo: number,
+    idClienteJwt: number,
+    rol: number,
+    req: Request,
+  ): Promise<VehiculoTurnoEstadoResponseDto> {
+    const id = Number(idVehiculo);
+    if (!Number.isFinite(id) || id <= 0) {
+      throw new BadRequestException('idVehiculo inválido');
+    }
+
+    const access = await this.tenantFilter.build(
+      rol,
+      idClienteJwt,
+      'v',
+      'IdCliente',
+    );
+    if (access.sinAcceso) {
+      throw new ForbiddenException('Sin acceso a vehículos de este alcance');
+    }
+
+    const rows = await this.vehiculosRepository.query(
+      `
+      SELECT
+        v.Id AS id,
+        v.IdCliente AS idCliente,
+        v.Placas AS placas,
+        v.FotoFrente AS fotoFrente,
+        v.Marca AS marca,
+        v.Modelo AS modelo
+      FROM Vehiculos v
+      WHERE v.Id = ? ${access.sql}
+      LIMIT 1
+      `,
+      [id, ...access.params],
+    );
+
+    const row = (rows as Record<string, unknown>[])?.[0];
+    if (!row) {
+      throw new NotFoundException(`Vehículo ${id} no encontrado`);
+    }
+
+    const placa = String(row.placas ?? '').trim();
+    const nombreClienteVehiculo = placa
+      ? await this.resolveNombreClientePorPlaca(placa, req)
+      : null;
+
+    const vehiculo = {
+      id: Number(row.id),
+      placas: placa,
+      marca: (row.marca as string | null) ?? null,
+      modelo: (row.modelo as string | null) ?? null,
+      fotoFrente: (row.fotoFrente as string | null) ?? null,
+      nombreCliente: nombreClienteVehiculo,
+    };
+
+    const turnoActivoEntity = await this.turnosRepository.findOne({
+      where: {
+        idVehiculo: id,
+        estatus: EstatusEnum.ACTIVO,
+        idEstatusTurno: EnumEstatusTurno.EN_CURSO,
+      },
+      relations: ['estatusTurno'],
+      order: { fechaApertura: 'DESC' },
+    });
+
+    if (turnoActivoEntity) {
+      return {
+        turnoActivo: true,
+        origen: 'activo',
+        vehiculo,
+        turno: await this.mapTurnoResumen(
+          turnoActivoEntity,
+          true,
+          req,
+          nombreClienteVehiculo,
+        ),
+      };
+    }
+
+    const ultimoTurno = await this.turnosRepository.findOne({
+      where: {
+        idVehiculo: id,
+        fechaApertura: Not(IsNull()),
+      },
+      relations: ['estatusTurno'],
+      order: { fechaApertura: 'DESC' },
+    });
+
+    if (!ultimoTurno) {
+      return {
+        turnoActivo: false,
+        origen: 'ninguno',
+        vehiculo,
+        turno: null,
+      };
+    }
+
+    return {
+      turnoActivo: false,
+      origen: 'ultimo',
+      vehiculo,
+      turno: await this.mapTurnoResumen(
+        ultimoTurno,
+        false,
+        req,
+        nombreClienteVehiculo,
+      ),
+    };
+  }
+
+  /**
+   * Todos los turnos del vehículo con DATE(FechaApertura) en [fechaDesde, fechaHasta].
+   * Cada ítem usa la misma forma que GET /api/turnos/:id (data + vehiculoPlaca + usuarioDetalle + bitacoraResumen).
+   */
+  async findTurnosPorRango(
+    idVehiculo: number,
+    idClienteJwt: number,
+    rol: number,
+    fechaDesde: string,
+    fechaHasta: string,
+    req: Request,
+  ): Promise<{
+    vehiculo: VehiculoTurnoEstadoVehiculoDto;
+    rango: { fechaDesde: string; fechaHasta: string };
+    data: Awaited<ReturnType<TurnosService['findOne']>>[];
+  }> {
+    const id = Number(idVehiculo);
+    if (!Number.isFinite(id) || id <= 0) {
+      throw new BadRequestException('idVehiculo inválido');
+    }
+    if (fechaDesde > fechaHasta) {
+      throw new BadRequestException(
+        'fechaDesde no puede ser posterior a fechaHasta',
+      );
+    }
+
+    const access = await this.tenantFilter.build(
+      rol,
+      idClienteJwt,
+      'v',
+      'IdCliente',
+    );
+    if (access.sinAcceso) {
+      throw new ForbiddenException('Sin acceso a vehículos de este alcance');
+    }
+
+    const rows = await this.vehiculosRepository.query(
+      `
+      SELECT
+        v.Id AS id,
+        v.IdCliente AS idCliente,
+        v.Placas AS placas,
+        v.FotoFrente AS fotoFrente,
+        v.Marca AS marca,
+        v.Modelo AS modelo
+      FROM Vehiculos v
+      WHERE v.Id = ? ${access.sql}
+      LIMIT 1
+      `,
+      [id, ...access.params],
+    );
+
+    const row = (rows as Record<string, unknown>[])?.[0];
+    if (!row) {
+      throw new NotFoundException(`Vehículo ${id} no encontrado`);
+    }
+
+    const placa = String(row.placas ?? '').trim();
+    const nombreClienteVehiculo = placa
+      ? await this.resolveNombreClientePorPlaca(placa, req)
+      : null;
+
+    const vehiculo: VehiculoTurnoEstadoVehiculoDto = {
+      id: Number(row.id),
+      placas: placa,
+      marca: (row.marca as string | null) ?? null,
+      modelo: (row.modelo as string | null) ?? null,
+      fotoFrente: (row.fotoFrente as string | null) ?? null,
+      nombreCliente: nombreClienteVehiculo,
+    };
+
+    const idRows = (await this.turnosRepository.query(
+      `
+      SELECT t.Id AS id
+      FROM Turnos t
+      WHERE t.IdVehiculo = ?
+        AND t.FechaApertura IS NOT NULL
+        AND DATE(t.FechaApertura) >= ?
+        AND DATE(t.FechaApertura) <= ?
+      ORDER BY t.FechaApertura DESC
+      `,
+      [id, fechaDesde, fechaHasta],
+    )) as Array<{ id: number | string }>;
+
+    const data = await Promise.all(
+      idRows.map((r) =>
+        this.turnosService.findOne(Number(r.id), idClienteJwt, req),
+      ),
+    );
+
+    return {
+      vehiculo,
+      rango: { fechaDesde, fechaHasta },
+      data,
+    };
+  }
+
+  private async mapTurnoResumen(
+    turno: Turnos,
+    activo: boolean,
+    req: Request,
+    nombreClienteFallback: string | null,
+  ): Promise<VehiculoTurnoResumenDto> {
+    const fechaApertura = turno.fechaApertura
+      ? new Date(turno.fechaApertura)
+      : null;
+    const fechaCierre = turno.fechaCierre
+      ? new Date(turno.fechaCierre)
+      : null;
+
+    let duracionSegundos: number | null = null;
+    if (fechaApertura) {
+      if (activo) {
+        duracionSegundos = Math.max(
+          0,
+          Math.floor((Date.now() - fechaApertura.getTime()) / 1000),
+        );
+      } else if (fechaCierre) {
+        duracionSegundos = Math.max(
+          0,
+          Math.floor(
+            (fechaCierre.getTime() - fechaApertura.getTime()) / 1000,
+          ),
+        );
+      }
+    }
+
+    const idUsuario =
+      turno.idUsuario != null ? Number(turno.idUsuario) : null;
+    const nombreUsuario =
+      idUsuario != null ? await this.resolveNombreUsuario(idUsuario, req) : null;
+
+    let nombreCliente = nombreClienteFallback;
+    if (!nombreCliente && turno.idCliente != null) {
+      nombreCliente = await this.resolveNombreCliente(
+        Number(turno.idCliente),
+        req,
+      );
+    }
+
+    return {
+      idTurno: Number(turno.id),
+      nombreUsuario,
+      nombreCliente,
+      fechaApertura: fechaApertura ? fechaApertura.toISOString() : null,
+      fechaCierre: fechaCierre ? fechaCierre.toISOString() : null,
+      duracion: turno.duracion ?? null,
+      duracionSegundos,
+      estatusTurnoNombre: turno.estatusTurno?.nombre ?? null,
+    };
+  }
+
+  /** Nombre legible desde Next GET /usuarios/:id (`data.usuario[0]`). */
+  private async resolveNombreUsuario(
+    idUsuario: number,
+    req: Request,
+  ): Promise<string | null> {
+    try {
+      const r = await this.endpointProxy.forwardGet(
+        `usuarios/${idUsuario}`,
+        req,
+      );
+      if (r.status < 200 || r.status >= 300) {
+        return null;
+      }
+      const root = r.data as { data?: { usuario?: unknown[] } };
+      const usuarioArr = root?.data?.usuario;
+      if (
+        !Array.isArray(usuarioArr) ||
+        usuarioArr[0] == null ||
+        typeof usuarioArr[0] !== 'object'
+      ) {
+        return null;
+      }
+      return this.pickNombrePersona(usuarioArr[0] as Record<string, unknown>);
+    } catch (err) {
+      this.logger.warn(
+        `No se pudo resolver nombre de usuario ${idUsuario}: ${(err as Error).message}`,
+      );
+      return null;
+    }
+  }
+
+  private async resolveNombreClientePorPlaca(
+    placa: string,
+    req: Request,
+  ): Promise<string | null> {
+    try {
+      const proxy = await this.findOneByPlaca(placa, req);
+      if (proxy.status < 200 || proxy.status >= 300) {
+        return null;
+      }
+      const payload = proxy.data as { data?: Record<string, unknown> };
+      const detalle = payload?.data;
+      if (!detalle || typeof detalle !== 'object') {
+        return null;
+      }
+      return this.pickNombrePersona(detalle);
+    } catch {
+      return null;
+    }
+  }
+
+  private async resolveNombreCliente(
+    idCliente: number,
+    req: Request,
+  ): Promise<string | null> {
+    try {
+      const r = await this.endpointProxy.forwardGet(`clientes/${idCliente}`, req);
+      if (r.status < 200 || r.status >= 300) {
+        return null;
+      }
+      const root = r.data as { data?: Record<string, unknown> | unknown[] };
+      const data = root?.data;
+      const obj = Array.isArray(data)
+        ? (data[0] as Record<string, unknown> | undefined)
+        : data;
+      if (!obj || typeof obj !== 'object') {
+        return null;
+      }
+      return this.pickNombrePersona(obj);
+    } catch {
+      return null;
+    }
+  }
+
+  private pickNombrePersona(o: Record<string, unknown>): string | null {
+    const completo =
+      o['nombreCompleto'] ??
+      o['NombreCompleto'] ??
+      o['nombreCliente'] ??
+      o['NombreCliente'];
+    if (typeof completo === 'string' && completo.trim()) {
+      return completo.trim();
+    }
+    const nombre =
+      typeof o['nombre'] === 'string'
+        ? o['nombre'].trim()
+        : typeof o['Nombre'] === 'string'
+          ? o['Nombre'].trim()
+          : '';
+    const apellido =
+      typeof o['apellido'] === 'string'
+        ? o['apellido'].trim()
+        : typeof o['Apellido'] === 'string'
+          ? o['Apellido'].trim()
+          : '';
+    const joined = `${nombre} ${apellido}`.trim();
+    if (joined) {
+      return joined;
+    }
+    const user =
+      o['usuario'] ?? o['Usuario'] ?? o['email'] ?? o['Email'] ?? o['razonSocial'];
+    if (typeof user === 'string' && user.trim()) {
+      return user.trim();
+    }
+    return null;
   }
 
   /**

@@ -1,9 +1,11 @@
 import {
   BadRequestException,
   HttpException,
+  Inject,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, IsNull, Not, Repository } from 'typeorm';
@@ -196,9 +198,11 @@ export class TurnosService {
     @InjectRepository(IncidenciaGasolina)
     private readonly incidenciaGasolinaRepository: Repository<IncidenciaGasolina>,
     private readonly turnosStorage: TurnosStorageService,
+    @Inject(forwardRef(() => VehiculosService))
     private readonly vehiculosService: VehiculosService,
     private readonly endpointProxy: EndpointProxyService,
     private readonly tenantFilter: TenantFilterService,
+    @Inject(forwardRef(() => BitacoraVehicularService))
     private readonly bitacoraVehicularService: BitacoraVehicularService,
   ) { }
 

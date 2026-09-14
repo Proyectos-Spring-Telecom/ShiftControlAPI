@@ -7,6 +7,7 @@ import {
   UseGuards,
   Req,
   Res,
+  Query,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -20,6 +21,8 @@ import { VehiculosService } from './vehiculos.service';
 import { JwtAuthGuard } from 'src/guard/jwt-auth.guard';
 import { RolesGuard } from 'src/guard/roles.guard';
 import { Roles } from 'src/common/decorators/roles.decorator';
+import { VehiculoTurnoEstadoResponseDto } from './dto/vehiculo-turno-estado.response';
+import { VehiculoTurnosRangoQueryDto } from './dto/vehiculo-turnos-rango-query.dto';
 import type { Request, Response } from 'express';
 
 @ApiTags('Vehiculos')
@@ -187,26 +190,140 @@ export class VehiculosController {
     return r.data;
   }
 
-  @Get(':page/:limit')
-  @ApiOperation({ summary: 'Lista paginada de vehículos (proxy a Next)' })
-  @ApiParam({ name: 'page', description: 'Número de página' })
-  @ApiParam({ name: 'limit', description: 'Registros por página' })
-  @ApiQuery({
-    name: 'soloActivos',
-    required: false,
-    description: 'Se reenvía a Next en la query (p. ej. true)',
+  @Get(':id/turno')
+  @ApiOperation({
+    summary: 'Estado de turno del vehículo',
+    description:
+      'Indica si el vehículo tiene un turno activo (`Estatus=1` + catálogo `EN_CURSO`).\n\n' +
+      '- Si hay activo: `turnoActivo=true`, `origen=activo` y resumen del turno.\n' +
+      '- Si no: `turnoActivo=false`, `origen=ultimo` con el turno más reciente por `fechaApertura`.\n' +
+      '- Sin turnos: `origen=ninguno` y `turno=null`.\n\n' +
+      'Alcance por rol vía TenantFilter sobre el `IdCliente` del vehículo sombra.',
   })
-  @ApiResponse({ status: 200, description: 'Lista paginada obtenida desde Next' })
+  @ApiParam({
+    name: 'id',
+    description: 'ID del vehículo (tabla sombra / mismo Id que Next)',
+    example: 42,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Estado de turno del vehículo',
+    type: VehiculoTurnoEstadoResponseDto,
+  })
+  @ApiResponse({ status: 404, description: 'Vehículo no encontrado o fuera de alcance' })
+  @ApiResponse({ status: 401, description: 'No autorizado' })
+  async findTurnoEstado(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request,
+  ): Promise<VehiculoTurnoEstadoResponseDto> {
+    const user = (req as Request & {
+      user?: { idCliente?: number; rol?: number };
+    }).user;
+    return this.vehiculosService.findTurnoEstado(
+      id,
+      Number(user?.idCliente),
+      Number(user?.rol),
+      req,
+    );
+  }
+
+  @Get(':id/turnos')
+  @ApiOperation({
+    summary: 'Turnos del vehículo por rango de fechas',
+    description:
+      'Lista todos los turnos del vehículo cuya `FechaApertura` cae en el rango ' +
+      '`fechaDesde`–`fechaHasta` (formato `YYYY-MM-DD`, inclusive).\n\n' +
+      'Cada elemento de `data` tiene **la misma forma** que `GET /api/turnos/:id`: ' +
+      '`data` (turno + incidencias), `vehiculoPlaca`, `usuarioDetalle` y `bitacoraResumen`.\n\n' +
+      'Orden: FechaApertura DESC. Alcance por rol vía TenantFilter sobre el vehículo sombra.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID del vehículo (tabla sombra / mismo Id que Next)',
+    example: 42,
+  })
+  @ApiQuery({ name: 'fechaDesde', required: true, example: '2026-06-01' })
+  @ApiQuery({ name: 'fechaHasta', required: true, example: '2026-06-30' })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Lista de turnos del vehículo en el rango (detalle completo por turno)',
+  })
+  @ApiResponse({ status: 400, description: 'Rango inválido o fechas mal formadas' })
+  @ApiResponse({ status: 404, description: 'Vehículo no encontrado o fuera de alcance' })
+  @ApiResponse({ status: 401, description: 'No autorizado' })
+  async findTurnosPorRango(
+    @Param('id', ParseIntPipe) id: number,
+    @Query() query: VehiculoTurnosRangoQueryDto,
+    @Req() req: Request,
+  ) {
+    const user = (req as Request & {
+      user?: { idCliente?: number; rol?: number };
+    }).user;
+    return this.vehiculosService.findTurnosPorRango(
+      id,
+      Number(user?.idCliente),
+      Number(user?.rol),
+      query.fechaDesde,
+      query.fechaHasta,
+      req,
+    );
+  }
+
+  @Get(':page/:limit')
+  @ApiOperation({
+    summary: 'Lista paginada de vehículos (tabla sombra local)',
+    description:
+      'Lee `Vehiculos` en ShiftControl (sombra). Misma forma que turnos: ' +
+      '`{ data: [...], paginated: { total, page, lastPage } }`.\n\n' +
+      'Alcance por rol del JWT (TenantFilter): roles 1–2 ven todos; 3–4 su cliente + hijos; ' +
+      'otros roles su `idCliente`.\n\n' +
+      'Para refrescar datos desde Next usar `POST /api/vehiculos/sync` o `GET /api/vehiculos/list`.',
+  })
+  @ApiParam({ name: 'page', description: 'Número de página (base 1)', example: 1 })
+  @ApiParam({
+    name: 'limit',
+    description: 'Registros por página (1–100)',
+    example: 10,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Página de vehículos sombra',
+    schema: {
+      example: {
+        data: [
+          {
+            id: 1,
+            idCliente: 11,
+            placas: 'A-06104-E',
+            fotoFrente: null,
+            marca: 'Volkswagen',
+            modelo: 'Virtus',
+            idVehiculoAuth: 42,
+            fechaCreacion: '2026-04-13T20:26:00.000Z',
+            fechaActualizacion: '2026-04-13T20:26:00.000Z',
+          },
+        ],
+        paginated: { total: 1, page: 1, lastPage: 1 },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'page/limit inválidos' })
   @ApiResponse({ status: 401, description: 'No autorizado' })
   async findAll(
     @Param('page', ParseIntPipe) page: number,
     @Param('limit', ParseIntPipe) limit: number,
     @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
   ) {
-    const r = await this.vehiculosService.findAll(page, limit, req);
-    res.status(r.status);
-    return r.data;
+    const user = (req as Request & {
+      user?: { idCliente?: number; rol?: number };
+    }).user;
+    return this.vehiculosService.findAll(
+      page,
+      limit,
+      Number(user?.idCliente),
+      Number(user?.rol),
+    );
   }
 
   @Get(':id')

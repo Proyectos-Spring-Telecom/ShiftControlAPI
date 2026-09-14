@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Request } from 'express';
 import { BitacoraVehiculo } from 'src/entities/BitacoraVehiculo';
@@ -42,6 +42,7 @@ export class BitacoraVehicularService {
     private readonly bitacoraRepository: Repository<BitacoraVehiculo>,
     @InjectRepository(InspeccionVehiculoEx)
     private readonly inspeccionRepository: Repository<InspeccionVehiculoEx>,
+    @Inject(forwardRef(() => VehiculosService))
     private readonly vehiculosService: VehiculosService,
     private readonly ubicacionService: UbicacionService,
     private readonly endpointProxy: EndpointProxyService,

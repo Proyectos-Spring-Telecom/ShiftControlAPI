@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Turnos } from 'src/entities/Turnos';
 import { Vehiculos } from 'src/entities/Vehiculos';
@@ -42,9 +42,9 @@ import { BitacoraVehicularModule } from 'src/bitacora-vehicular/bitacora-vehicul
     ]),
     TurnosStorageModule,
     EndpointProxyModule,
-    VehiculosModule,
+    forwardRef(() => VehiculosModule),
     TenantFilterModule,
-    BitacoraVehicularModule,
+    forwardRef(() => BitacoraVehicularModule),
   ],
   controllers: [TurnosController],
   providers: [TurnosService],
